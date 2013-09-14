@@ -28,6 +28,8 @@ int(* real_connect)(int, const struct sockaddr *, socklen_t);
 
 ssize_t(* real_read)(int fd, void *buf, size_t count);
 
+size_t(* real__read_chk)(int fd, void * buf, size_t nbytes, size_t buflen);
+
 ssize_t(* real_write)(int fd, const void *buf, size_t count);
 
 int(* real_socket)(int domain, int type, int protocol);
@@ -57,7 +59,6 @@ int(* real_fcntl) (int fd, int cmd, ... /* arg */ );
 int(* real_select) (int nfds, fd_set *readfds, fd_set *writefds,
                   fd_set *exceptfds, struct timeval *timeout);
 
-
 typedef struct wrappedFd {
     int fd;
     int wrappedFd;
@@ -73,6 +74,7 @@ int portFromAddress(void *addr, int addrlen, int type);
 static void wrap_init(void) {
     real_connect = dlsym(RTLD_NEXT, "connect");
     real_read = dlsym(RTLD_NEXT, "read");
+    real__read_chk = dlsym(RTLD_NEXT, "__read_chk");
     real_write = dlsym(RTLD_NEXT, "write");
 	real_socket = dlsym(RTLD_NEXT, "socket");
 	real_poll = dlsym(RTLD_NEXT, "poll");
@@ -343,6 +345,21 @@ ssize_t read(int fd, void *buf, size_t count) {
         return ret;
 	} else {
 		return real_read(fd, buf, count);
+	}
+}
+
+ssize_t __read_chk(int fd, void * buf, size_t nbytes, size_t buflen) {
+    
+	struct sshSession *sshSession;
+    fprintf(stderr, "read wrapper (%d)\n", fd);
+	
+	
+	sshSession = sshSessionForWrapperFd(fd);
+	
+	if (sshSession != NULL) {
+        return read(fd, buf, nbytes);
+	} else {
+		return real__read_chk(fd, buf, nbytes, buflen);
 	}
 }
 
