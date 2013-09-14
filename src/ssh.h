@@ -16,7 +16,7 @@ struct sshSession {
     int peekDataRead;
 };
 
-int ssh_connect(struct sshSession *sshSession, int sockfd, char *host, int port);
+int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int port);
 ssize_t ssh_write(struct sshSession *session, const char *buf, size_t buflen);
 ssize_t ssh_read(struct sshSession *session, char *buf, size_t buflen);
 int ssh_read_peek(struct sshSession *sshSession, char *buf, size_t buflen);

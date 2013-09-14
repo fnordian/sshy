@@ -4,7 +4,7 @@
 
 static int ssh_initialized = 0;
 
-int ssh_connect(struct sshSession *sshSession, int sockfd, char *host, int port) {
+int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int port) {
     LIBSSH2_SESSION *session;
     LIBSSH2_CHANNEL *channel = NULL;
     int rc;

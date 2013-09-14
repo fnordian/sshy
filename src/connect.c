@@ -68,6 +68,7 @@ typedef struct wrappedFd {
 fd_t wrappedFds[MAXFD];
 
 static void wrap_init(void) __attribute__((constructor));
+int portFromAddress(void *addr, int addrlen, int type);
 
 static void wrap_init(void) {
     real_connect = dlsym(RTLD_NEXT, "connect");
@@ -211,9 +212,6 @@ int connectToServer(const char *hostname, int port) {
 }
 
 struct sshSession *createSshSession() {
-	int fd;
-	struct sockaddr_in addr;
-	
 	struct sshSession *sshSession = calloc(1, sizeof(struct sshSession));
     
 	
@@ -301,7 +299,7 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 	if (sshSession) {
         
         char hostnamebuf[1024];
-        char *hostname;
+        const char *hostname;
         int port;
         void *addrptr;
         int idx;
@@ -313,7 +311,7 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         addrptr = addr->sa_family == AF_INET ? (void *)  &((struct sockaddr_in *) addr)->sin_addr.s_addr : (void *) &((struct sockaddr_in6 *) addr)->sin6_addr;
         
         hostname = hostnameFromAddress(hostnamebuf, sizeof(hostnamebuf), addrptr, addrlen, addr->sa_family);
-        port = portFromAddress(addr, addrlen, addr->sa_family);
+        port = portFromAddress((void*) addr, addrlen, addr->sa_family);
 		
 		ret = ssh_connect(sshSession, sshSession->fd, hostname, port);
         ssh_set_block(sshSession, wrappedFds[idx].blocking);
@@ -397,6 +395,7 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout) {
 	for (i = 0; i < nfds; i++) {
 		fds[i].fd = wrapperFdForWrappedFd(fds[i].fd);
 	}
+    fprintf(stderr, "poll returns %d\n", ret);
 	return ret;
 }
 ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
@@ -469,8 +468,9 @@ ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
 }
 
 
-char *hostnameFromAddress(char *buf, int buflen, const void *addr, int addrlen, int type) {
-    inet_ntop(type, addr, buf, buflen);
+const char *hostnameFromAddress(char *buf, int buflen, const void *addr, int addrlen, int type) {
+    fprintf(stderr, "hostnameFromAddress, type: %d\n", type);
+    return inet_ntop(type, addr, buf, buflen);
 }
 
 int portFromAddress(void *addr, int addrlen, int type) {
