@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ $# -lt 4 ]; then
+	echo "usage: $0 username password host command..." >&2
+	exit 1;
+fi
+
+export SSHY_USER=$1
+export SSHY_PASS=$2
+export SSHY_HOST=$3
+
+shift; shift; shift
+
+export LD_PRELOAD=./out/production/sshy/libsshy.so
+
+$@ 2>/tmp/out 
+	
