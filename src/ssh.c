@@ -1,8 +1,28 @@
 #include "ssh.h"
 #include <stdio.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h> 
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include "connect.h"
+#include "log.h"
 
 static int ssh_initialized = 0;
+
+static int connectToServer(const char *hostname, int port);
+
+void handleTunnelClient(int clientSocket,const char *targetHost,
+                        const int targetPort, struct sockaddr *clientAddress, int clientAddressLen);
+
+struct sshSession *createSshSession();
 
 int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int port) {
     LIBSSH2_SESSION *session;
@@ -22,14 +42,14 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
     
     // TODO: obey userauthlist
     
-    fprintf(stderr, "authenticating %s/%s\n", sshSession->username, sshSession->password);
+    sshy_log( "authenticating %s/%s\n", sshSession->username, sshSession->password);
     
     if (libssh2_userauth_password(session, sshSession->username, sshSession->password)) {
-        fprintf(stderr, "authentication error\n");
+        sshy_log( "authentication error\n");
         return -1;
     }
     
-    fprintf(stderr, "opening tcpchannel to %s:%d\n", host, port);
+    sshy_log( "opening tcpchannel to %s:%d\n", host, port);
     
     channel = libssh2_channel_direct_tcpip(session, host, port);
     
@@ -41,10 +61,10 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
    
     
     if (channel != NULL) {
-        fprintf(stderr, "i've got the channel!!!!\n");
+        sshy_log( "i've got the channel!!!!\n");
         return 0;
     } else {
-        fprintf(stderr, "couldn't get the channel!!!!\n");
+        sshy_log( "couldn't get the channel!!!!\n");
         return -1;
     }
 }
@@ -95,14 +115,14 @@ ssize_t ssh_read(struct sshSession *sshSession, char *buf, size_t buflen) {
     }
         
     if (ret > 0) {
-        fprintf(stderr, "ssh_read got: %s\n", buf);
+        sshy_log( "ssh_read got: %s\n", buf);
     } else {
-        fprintf(stderr, "ssh_read error: %d\n", ret);
+        sshy_log( "ssh_read error: %d\n", ret);
         
         if (libssh2_channel_eof(sshSession->channel)) {
-            fprintf(stderr, "ssh_read eof\n");
+            sshy_log( "ssh_read eof\n");
         } else {
-            fprintf(stderr, "ssh_read no eof\n");
+            sshy_log( "ssh_read no eof\n");
         }   
     }
     
@@ -149,7 +169,7 @@ int ssh_read_poll(struct sshSession *sshSession, int blocking) {
     
     libssh2_channel_set_blocking(sshSession->channel, blocking);
     
-    fprintf(stderr, "read poll ret: %d ____________-------------_______________-\n", ret);
+    sshy_log( "read poll ret: %d ____________-------------_______________-\n", ret);
     
     if (ret == 1) {
         sshSession->peekDataRead = 1;
@@ -161,7 +181,215 @@ int ssh_read_poll(struct sshSession *sshSession, int blocking) {
 
 void ssh_set_block(struct sshSession *sshSession, int blocking) {
     if (sshSession->channel) {
-        fprintf(stderr, "setting channel to %s\n", blocking ? "blocking" : "non blocking");
+        sshy_log( "setting channel to %s\n", blocking ? "blocking" : "non blocking");
         libssh2_channel_set_blocking(sshSession->channel, blocking);
+    }
+}
+
+int createListenSocket(int *port) {
+    struct sockaddr_in serv_addr;
+    int sockfd;
+    int addrlen;
+    
+    sockfd = real_socket(AF_INET, SOCK_STREAM, 0);
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(INADDR_ANY);
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        sshy_log( "cannot bind to ssh forward port, socket: %u\n", sockfd);
+        perror("bind");
+        return -1;
+    }
+    
+    listen(sockfd,5);
+
+    addrlen = sizeof(serv_addr);
+    
+    getsockname(sockfd, (struct sockaddr *) &serv_addr, &addrlen);
+    *port = serv_addr.sin_port;
+    
+    return sockfd;
+}
+
+int tunnelPort(const char *targetHost, const int targetPort) {
+    int listenSocket;
+    int listenPort;
+    LIBSSH2_SESSION *session;
+    struct sockaddr_in sin;
+    int sinlen = sizeof(sin);
+    pid_t p;
+    
+    sshy_log("creating tunnel to %s:%d\n", targetHost, targetPort);
+    
+    listenSocket = createListenSocket(&listenPort);
+        
+    if ((p = fork()) == 0) { // no zombies please
+        //signal(SIGCHLD, SIG_IGN);
+        if (fork() == 0) {
+            int clientSocket;
+            
+            sshy_log("about to accept. %d\n", getpid());
+            
+            if((clientSocket = accept(listenSocket, (struct sockaddr *)&sin, &sinlen)) > 0) {
+                real_close(listenSocket);
+                sshy_log( "client socket: %d\n", clientSocket);
+               
+                handleTunnelClient(clientSocket, targetHost, targetPort, (struct sockaddr *) &sin, sinlen);
+                real_close(clientSocket);
+            }
+        }
+        _exit(0);
+    } else if (p > 0) {
+        waitpid(p, NULL, 0);
+    }
+    
+    real_close(listenSocket);
+    
+    return listenPort;
+}
+
+static char *inet46_ntoa(struct sockaddr *sin) {
+    if (sin->sa_family == AF_INET) {
+        return inet_ntoa(((struct sockaddr_in *)sin)->sin_addr);
+    } else {
+        return "";
+    }
+}
+
+static unsigned short inet46_ntohs(struct sockaddr *sin) {
+    if (sin->sa_family == AF_INET) {
+        return ntohs(((struct sockaddr_in *)sin)->sin_port);
+    } else {
+        return 0;
+    }
+}
+
+#define STOP { stopped = 1; break; }
+
+void handleTunnelClient(int clientSocket,const char *targetHost,
+                        const int targetPort, struct sockaddr *clientAddress, int clientAddressLen) {
+    struct sshSession * sshSession = createSshSession();
+    fd_set fds;
+    struct timeval tv;
+    int stopped = 0;
+    char buf[16384];
+    int rc;
+    ssize_t len, wr;
+    char *shost;
+    unsigned short sport;
+    int i;
+    
+    if (ssh_connect(sshSession, sshSession->fd, targetHost, targetPort)) {
+        sshy_log( "ssh_connect error\n");
+        return;
+    }
+    
+    libssh2_session_set_blocking(sshSession->session, 0);
+
+    shost = inet46_ntoa(clientAddress);
+    sport = inet46_ntohs(clientAddress);
+    
+    sshy_log( "client socket: %d\n", clientSocket);
+    
+    while (! stopped) {
+        FD_ZERO(&fds);
+        FD_SET(clientSocket, &fds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
+        rc = select(clientSocket + 1, &fds, NULL, NULL, &tv);
+        
+        if (-1 == rc) {
+                perror("select");
+                
+                break;
+        }
+        
+        if (rc && FD_ISSET(clientSocket, &fds)) {
+            int len = recv(clientSocket, buf, sizeof(buf), 0);
+            if (len < 0) {
+                perror("read");
+                break;
+            } else if (0 == len) {
+                sshy_log( "The client at %s:%d disconnected!\n", shost,
+                    sport);
+                break;
+            }
+            wr = 0;
+            
+            ssh_write(sshSession, buf, len);
+              
+        }
+        while (1) {
+            len = ssh_read(sshSession, buf, sizeof(buf));
+
+            if (-1 == len && errno == EAGAIN) {
+                break;
+            } else if (len < 0) {
+                sshy_log( "libssh2_channel_read: %d", (int)len);
+                STOP;
+            } else if (len == 0) {
+                STOP;
+            }
+            wr = 0;
+            while (wr < len) {
+                i = send(clientSocket, buf + wr, len - wr, 0);
+                if (i <= 0) {
+                    perror("write");
+                    STOP;
+                }
+                wr += i;
+            }
+        }
+    
+    }
+    
+    real_close(clientSocket);
+    
+}
+
+
+
+static int connectToServer(const char *hostname, int port) {
+    struct sockaddr_in serveraddr;
+    struct hostent *server;
+    int sockfd;
+    
+    server = gethostbyname(hostname);
+    if (server == NULL) {
+        sshy_log("ERROR, no such host as %s\n", hostname);
+        return -1;
+    }
+
+    sockfd = real_socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) 
+        return -1;
+    
+    /* build the server's Internet address */
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr, 
+      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(port);
+    
+    /* connect: create a connection with the server */
+    if (real_connect(sockfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0)
+      return -1;
+    
+    return sockfd;
+}
+
+struct sshSession *createSshSession() {
+    struct sshSession *sshSession = calloc(1, sizeof(struct sshSession));
+    
+    
+    strncpy(sshSession->username, getenv("SSHY_USER"), sizeof(sshSession->username));
+    strncpy(sshSession->password, getenv("SSHY_PASS"), sizeof(sshSession->password));
+    
+    sshSession->fd = connectToServer(getenv("SSHY_HOST"), 22);
+    
+    if (sshSession->fd < 0) {
+        return NULL;
+    } else {    
+        return sshSession;
     }
 }

@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include "ssh.h"
 
 #define BUFSIZE 1024
 
@@ -20,7 +21,7 @@
  * error - wrapper for perror
  */
 void error(char *msg) {
-    fprintf(stderr, "woop\n");
+    sshy_log( "woop\n");
     perror(msg);
     exit(0);
 }
@@ -43,14 +44,19 @@ void readFile() {
     
     buf[sizeof(buf)-1] = '\0';
     
-    fprintf(stderr, "%s\n", buf);
+    sshy_log( "%s\n", buf);
   
 }
 
 int main(int argc, char **argv) {
     
     do_main(argc, argv);
-    do_main(argc, argv);
+//    do_main(argc, argv);
+//    another_main(argc, argv);
+}
+
+int another_main(int argc, char **argv) {
+    tunnelPort("yahoo.de", 80);
 }
 
 int do_main(int argc, char **argv) {
@@ -64,7 +70,7 @@ int do_main(int argc, char **argv) {
 
     /* check command line arguments */
     if (argc != 3) {
-       fprintf(stderr,"usage: %s <hostname> <port>\n", argv[0]);
+       sshy_log("usage: %s <hostname> <port>\n", argv[0]);
        exit(0);
     }
     hostname = argv[1];
@@ -78,7 +84,7 @@ int do_main(int argc, char **argv) {
     /* gethostbyname: get the server's DNS entry */
     server = gethostbyname(hostname);
     if (server == NULL) {
-        fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+        sshy_log("ERROR, no such host as %s\n", hostname);
         exit(0);
     }
 
@@ -108,7 +114,7 @@ int do_main(int argc, char **argv) {
     n = read(sockfd, buf, BUFSIZE);
     if (n < 0) 
       error("ERROR reading from socket");
-    fprintf(stderr, "Echo from server: %s", buf);
+    printf( "Echo from server: %s", buf);
     close(sockfd);
     
     

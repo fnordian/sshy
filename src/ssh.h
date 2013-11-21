@@ -24,4 +24,6 @@ int ssh_read_poll(struct sshSession *session, int blocking);
 void ssh_set_block(struct sshSession *session, int blocking);
 void ssh_free(struct sshSession *sshSession);
 
+int tunnelPort(const char *targetHost, const int targetPort);
+
 #endif
