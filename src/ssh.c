@@ -115,7 +115,7 @@ ssize_t ssh_read(struct sshSession *sshSession, char *buf, size_t buflen) {
     }
         
     if (ret > 0) {
-        sshy_log( "ssh_read got: %s\n", buf);
+        //sshy_log( "ssh_read got: %s\n", buf);
     } else {
         sshy_log( "ssh_read error: %d\n", ret);
         
@@ -132,15 +132,11 @@ ssize_t ssh_read(struct sshSession *sshSession, char *buf, size_t buflen) {
 }
 
 int ssh_read_peek(struct sshSession *sshSession, char *buf, size_t buflen) {
-    
+  
     int ret;
     
     if (!sshSession->peekDataRead) {
-        
-   
-    
         ret = libssh2_channel_read(sshSession->channel, &sshSession->peekData, 1);
-        
         if (ret > 0) {
             sshSession->peekDataRead = 1;
         }
@@ -189,7 +185,7 @@ void ssh_set_block(struct sshSession *sshSession, int blocking) {
 int createListenSocket(int *port) {
     struct sockaddr_in serv_addr;
     int sockfd;
-    int addrlen;
+    socklen_t addrlen;
     
     sockfd = real_socket(AF_INET, SOCK_STREAM, 0);
     serv_addr.sin_family = AF_INET;
@@ -197,7 +193,6 @@ int createListenSocket(int *port) {
     serv_addr.sin_port = htons(INADDR_ANY);
     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
         sshy_log( "cannot bind to ssh forward port, socket: %u\n", sockfd);
-        perror("bind");
         return -1;
     }
     
@@ -214,46 +209,38 @@ int createListenSocket(int *port) {
 int tunnelPort(const char *targetHost, const int targetPort) {
     int listenSocket;
     int listenPort;
-    LIBSSH2_SESSION *session;
     struct sockaddr_in sin;
-    int sinlen = sizeof(sin);
+    socklen_t sinlen = sizeof(sin);
     pid_t p;
     
-    sshy_log("creating tunnel to %s:%d\n", targetHost, targetPort);
     
     listenSocket = createListenSocket(&listenPort);
         
+    sshy_log("creating tunnel to %s:%d @ port %d\n", targetHost, targetPort, listenPort);
+
+    
     if ((p = fork()) == 0) { // no zombies please
-        //signal(SIGCHLD, SIG_IGN);
-        if (fork() == 0) {
-            int clientSocket;
+        int clientSocket;
+        
+        sshy_log("about to accept. %d\n", getpid());
+        
+        if((clientSocket = accept(listenSocket, (struct sockaddr *)&sin, &sinlen)) > 0) {
+            real_close(listenSocket);
+            sshy_log( "client socket: %d\n", clientSocket);
             
-            sshy_log("about to accept. %d\n", getpid());
-            
-            if((clientSocket = accept(listenSocket, (struct sockaddr *)&sin, &sinlen)) > 0) {
-                real_close(listenSocket);
-                sshy_log( "client socket: %d\n", clientSocket);
-               
-                handleTunnelClient(clientSocket, targetHost, targetPort, (struct sockaddr *) &sin, sinlen);
-                real_close(clientSocket);
-            }
+            handleTunnelClient(clientSocket, targetHost, targetPort, (struct sockaddr *) &sin, sinlen);
+            real_close(clientSocket);
         }
+    
         _exit(0);
-    } else if (p > 0) {
-        waitpid(p, NULL, 0);
     }
     
     real_close(listenSocket);
-    
     return listenPort;
 }
 
-static char *inet46_ntoa(struct sockaddr *sin) {
-    if (sin->sa_family == AF_INET) {
-        return inet_ntoa(((struct sockaddr_in *)sin)->sin_addr);
-    } else {
-        return "";
-    }
+static const char *inet46_ntoa(struct sockaddr *sin, char *buf, int bufsize) {
+   return inet_ntop(sin->sa_family, sin, buf, bufsize);
 }
 
 static unsigned short inet46_ntohs(struct sockaddr *sin) {
@@ -275,7 +262,7 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
     char buf[16384];
     int rc;
     ssize_t len, wr;
-    char *shost;
+    char shost[200];
     unsigned short sport;
     int i;
     
@@ -286,7 +273,7 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
     
     libssh2_session_set_blocking(sshSession->session, 0);
 
-    shost = inet46_ntoa(clientAddress);
+    inet46_ntoa(clientAddress, shost, sizeof(shost));
     sport = inet46_ntohs(clientAddress);
     
     sshy_log( "client socket: %d\n", clientSocket);
@@ -299,7 +286,6 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
         rc = select(clientSocket + 1, &fds, NULL, NULL, &tv);
         
         if (-1 == rc) {
-                perror("select");
                 
                 break;
         }
@@ -307,7 +293,6 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
         if (rc && FD_ISSET(clientSocket, &fds)) {
             int len = recv(clientSocket, buf, sizeof(buf), 0);
             if (len < 0) {
-                perror("read");
                 break;
             } else if (0 == len) {
                 sshy_log( "The client at %s:%d disconnected!\n", shost,
@@ -334,7 +319,6 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
             while (wr < len) {
                 i = send(clientSocket, buf + wr, len - wr, 0);
                 if (i <= 0) {
-                    perror("write");
                     STOP;
                 }
                 wr += i;
@@ -350,30 +334,30 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
 
 
 static int connectToServer(const char *hostname, int port) {
-    struct sockaddr_in serveraddr;
-    struct hostent *server;
     int sockfd;
+    struct addrinfo *addrinfo;
+    char portstring[10];
     
-    server = gethostbyname(hostname);
-    if (server == NULL) {
+    snprintf(portstring, sizeof(portstring), "%d", port);
+    
+    if (getaddrinfo(hostname, portstring, NULL, &addrinfo)) {
         sshy_log("ERROR, no such host as %s\n", hostname);
         return -1;
     }
 
     sockfd = real_socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) 
+    if (sockfd < 0) {
+        freeaddrinfo(addrinfo);
         return -1;
-    
-    /* build the server's Internet address */
-    bzero((char *) &serveraddr, sizeof(serveraddr));
-    serveraddr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, 
-      (char *)&serveraddr.sin_addr.s_addr, server->h_length);
-    serveraddr.sin_port = htons(port);
+    }
     
     /* connect: create a connection with the server */
-    if (real_connect(sockfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0)
-      return -1;
+    if (real_connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) < 0) {
+        close(sockfd);
+        sockfd = -1;
+    }
+    
+    freeaddrinfo(addrinfo);
     
     return sockfd;
 }

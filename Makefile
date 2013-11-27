@@ -23,8 +23,8 @@ INCLUDES = -I$(SOURCE_PATH)
 LIBS = -ldl  -lssh2
 # LIBPATH = -L../gc/.libs
 LIBPATH =
-CPPFLAGS = $(COPT) -g $(INCLUDES)
-LDFLAGS = $(LIBPATH) -g $(LIBS)  -Wl,--wrap,poll
+CPPFLAGS = $(COPT) -g $(INCLUDES) -Wall
+LDFLAGS = $(LIBPATH) -g $(LIBS)  -Wl,--wrap,poll -std=gnu99 -march=i686
 DEP = dep
 
 OBJS := $(patsubst %.$(C),%.$(OBJ),$(wildcard $(SOURCE_PATH)*.$(C)))
@@ -41,7 +41,7 @@ all: exe lib
 	
 exe: $(OBJS)
 	mkdir -p $(OUTPUT_PATH)
-	$(CCMD) $(LDFLAGS) $^ $(LIBS) $(EXEFLAG) $(EXE)
+	$(CCMD) $(LDFLAGS) $^ $(LIBS) $(EXEFLAG) $(EXE)  -lpthread 
 
 lib: $(LIBOBJS)
 	mkdir -p $(OUTPUT_PATH)

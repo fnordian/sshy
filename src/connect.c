@@ -21,6 +21,8 @@
 #include "connect.h"
 #include "ssh.h"
 #include "log.h"
+#include "tunnelservice.h"
+#include "mutex.h"
 
 typedef  int f_connect;
 #define MAXFD 100
@@ -35,11 +37,24 @@ typedef struct wrappedFd {
 
 fd_t wrappedFds[MAXFD];
 
+static int initialized = 0;
+static int mutex;
+
 static void wrap_init(void) __attribute__((constructor));
 int portFromAddress(void *addr, int addrlen, int type);
 
 static void wrap_init(void) {
     int i;
+    volatile int _initialized;
+    
+    _initialized = __sync_fetch_and_add(&initialized, 1);
+    
+    if (_initialized) {
+        return;
+    }
+    
+    mutex = createMutex();
+    
     real_connect = dlsym(RTLD_NEXT, "connect");
 	real_socket = dlsym(RTLD_NEXT, "socket");
 	real_close= dlsym(RTLD_NEXT, "close");
@@ -51,14 +66,18 @@ static void wrap_init(void) {
 int wrapFd(int fd) {
     int idx;
 
+    get_mutex(mutex);
+    
     idx = findFreeFdSlot();
     
     sshy_log( "wrapping %d, idx: %d\n", fd, idx);
 
     if (idx >= 0) {
         wrappedFds[idx].fd = fd;
+        release_mutex(mutex);
         return idx;
     } else {
+        release_mutex(mutex);
         return -1;
     }
 }
@@ -68,12 +87,17 @@ int wrapFd(int fd) {
 int findFdWrapSlot(int fd) {
     int i;
 
-     for (i = 0; i < MAXFD; i++) {
+    get_mutex(mutex);
+    
+    for (i = 0; i < MAXFD; i++) {
         if (wrappedFds[i].fd == fd) {
+            release_mutex(mutex);
             return i;
         }
     }
 
+    release_mutex(mutex);
+    
     sshy_log( "findFdWrapSlot didnt find slot\n");
     
     return -1;
@@ -94,7 +118,6 @@ int findFreeFdSlot() {
 
 int socket(int domain, int type, int protocol) {
 	int fd;
-	int wrapperFd;
 	int idx;
 	
     fd = real_socket(domain, type, protocol);
@@ -127,7 +150,7 @@ int close(int fd) {
     return real_close(fd);
 }
 
-static setTunnelPortAndHost(const struct sockaddr *addr, int port) {
+static void setTunnelPortAndHost(const struct sockaddr *addr, int port) {
     if (addr->sa_family == AF_INET) {
         struct sockaddr_in *inaddr = (struct sockaddr_in *) addr;
         inaddr->sin_port = port;
@@ -136,45 +159,27 @@ static setTunnelPortAndHost(const struct sockaddr *addr, int port) {
         struct sockaddr_in6 *inaddr6 = (struct sockaddr_in6 *) addr;
         inaddr6->sin6_port = port;
         memcpy(&inaddr6->sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback));
+        fprintf(stderr, "ipv6!!!\n");
     }
 }
 
 int connect(int sockfd, const struct sockaddr *_addr, socklen_t addrlen) {
-    int wrappedFd;
-	struct sshSession *sshSession;
-    int ret;
+	int ret;
     struct sockaddr *addr = alloca(addrlen);
     
     memcpy(addr, _addr, addrlen);
 	
 	sshy_log( "connect begin %d\n", sockfd);
-    fflush(stderr);
+    
 	
 	
 	
-	if (findFdWrapSlot(sockfd) >= 0) {
-        
-        char hostnamebuf[1024];
-        const char *hostname;
-        int port;
-        void *addrptr;
-        int idx;
+	if (findFdWrapSlot(sockfd) >= 0 && (addr->sa_family == AF_INET || addr->sa_family == AF_INET6)) {
         int localTunnelEntryPort;
         
-        
-        
-        sshy_log( "connect %d with having sshsession\n", sockfd);
-        
-        addrptr = addr->sa_family == AF_INET ? (void *)  &((struct sockaddr_in *) addr)->sin_addr.s_addr : (void *) &((struct sockaddr_in6 *) addr)->sin6_addr;
-        
-        hostname = hostnameFromAddress(hostnamebuf, sizeof(hostnamebuf), addrptr, addrlen, addr->sa_family);
-        port = portFromAddress((void*) addr, addrlen, addr->sa_family);
-		
-		localTunnelEntryPort = tunnelPort(hostname, port);
+        localTunnelEntryPort = requestTunnel(_addr, addrlen);
         
         setTunnelPortAndHost(addr, localTunnelEntryPort);
-        
-        sshy_log("about to connect to tunnelport %d\n", localTunnelEntryPort);
         
         ret = real_connect(sockfd, addr, addrlen);
         
@@ -184,21 +189,7 @@ int connect(int sockfd, const struct sockaddr *_addr, socklen_t addrlen) {
 		ret = real_connect(sockfd, addr, addrlen);
 	}
 	
-	sshy_log( "connect end %d, returned %d\n", sockfd, ret);
-    fflush(stderr);
-    
-	
 	return ret;
 }
 
-const char *hostnameFromAddress(char *buf, int buflen, const void *addr, int addrlen, int type) {
-    sshy_log( "hostnameFromAddress, type: %d\n", type);
-    return inet_ntop(type, addr, buf, buflen);
-}
-
-int portFromAddress(void *addr, int addrlen, int type) {
-    struct sockaddr_in *inetAddress = (struct sockaddr_in *) addr;
-    
-    return ntohs(inetAddress->sin_port);
-}
 
