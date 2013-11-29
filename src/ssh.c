@@ -24,6 +24,31 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
 
 struct sshSession *createSshSession();
 
+int ssh_agentAuthenticate(LIBSSH2_SESSION *session, const char *username) {
+    LIBSSH2_AGENT *agent;
+    struct libssh2_agent_publickey *key, *prev = NULL;
+    int ret = -1;
+    
+    agent = libssh2_agent_init(session);
+    if (!agent || libssh2_agent_connect(agent)) {
+        return ret;
+    }
+        
+    if (libssh2_agent_list_identities(agent)) {
+        return ret;
+    }
+    
+    while (agent != NULL && 0 == libssh2_agent_get_identity(agent, &key, prev)) {
+        if (!libssh2_agent_userauth(agent, username, key)) {
+            ret = 0;
+            break;
+        }
+        prev = key;
+    }
+    
+    return ret;
+}
+
 int ssh_authenticate(struct sshSession *sshSession) {
     char *userauthlist;
     char *publicKey;
@@ -36,7 +61,11 @@ int ssh_authenticate(struct sshSession *sshSession) {
     
     sshy_log( "authenticating %s/%s\n", sshSession->username, sshSession->password);
     
-    if (sshSession->privateKeyFilename[0]) {
+    if (!ssh_agentAuthenticate(session, sshSession->username)) {
+        ret = 0;
+    }
+    
+    if (ret && sshSession->privateKeyFilename[0]) {
         int rc;
         int len = strlen(sshSession->privateKeyFilename);
         publicKey = alloca(len+5);

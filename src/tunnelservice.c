@@ -13,22 +13,13 @@
 #include <sys/msg.h>
 #include <sys/sem.h>
 #include <signal.h>
-
-
-#include "ssh.h"
-#include "log.h"
-#include "mutex.h"
-
-       #include <sys/types.h>
-       #include <sys/stat.h>
-       #include <fcntl.h>
-       
-#include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-
+#include "ssh.h"
+#include "log.h"
+#include "mutex.h"
        
 static int clientReader, clientWriter;
 static int serverReader, serverWriter;

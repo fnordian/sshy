@@ -36,7 +36,6 @@ export SSHY_HOST
 export SSHY_KEYFILE
 
 test -z "$SSHY_USER" && error "-l username required"
-test -z "$SSHY_PASS" && test -z "$SSHY_KEYFILE" && error "-p password or -i keyfile required"
 test -z "$SSHY_HOST" && error "hostname required"
 test $# == 0 && error "command to tunnel required"
 
