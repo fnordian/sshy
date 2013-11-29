@@ -145,7 +145,6 @@ static u_int16_t portFromAddress(void *addr, socklen_t addrlen, int type) {
 
 static void readTunnelRequest(struct sockaddr *addr, socklen_t *addrlen) {
     readForSure(serverReader, addrlen, sizeof(socklen_t));
-    fprintf(stderr, "read addrlen %u\n", *addrlen);
     readForSure(serverReader, addr, *addrlen);
 }
 

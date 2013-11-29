@@ -159,7 +159,6 @@ static void setTunnelPortAndHost(const struct sockaddr *addr, int port) {
         struct sockaddr_in6 *inaddr6 = (struct sockaddr_in6 *) addr;
         inaddr6->sin6_port = port;
         memcpy(&inaddr6->sin6_addr, &in6addr_loopback, sizeof(in6addr_loopback));
-        fprintf(stderr, "ipv6!!!\n");
     }
 }
 

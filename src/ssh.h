@@ -8,6 +8,7 @@ struct sshSession {
     LIBSSH2_CHANNEL *channel;
     char username[64];
     char password[64];
+    char privateKeyFilename[1024];
     struct sockaddr *addr;
     ssize_t addrlen;
     int fd;

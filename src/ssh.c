@@ -24,11 +24,49 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
 
 struct sshSession *createSshSession();
 
+int ssh_authenticate(struct sshSession *sshSession) {
+    char *userauthlist;
+    char *publicKey;
+    int ret = -1;
+    LIBSSH2_SESSION *session;
+    
+    session = sshSession->session;
+    
+    userauthlist = libssh2_userauth_list(session, sshSession->username, strlen(sshSession->username));
+    
+    sshy_log( "authenticating %s/%s\n", sshSession->username, sshSession->password);
+    
+    if (sshSession->privateKeyFilename[0]) {
+        int rc;
+        int len = strlen(sshSession->privateKeyFilename);
+        publicKey = alloca(len+5);
+        memcpy(publicKey, sshSession->privateKeyFilename, len);
+        strcpy(publicKey+len, ".pub");
+        
+        if ((rc = libssh2_userauth_publickey_fromfile(session, sshSession->username, 
+            publicKey, sshSession->privateKeyFilename, NULL))) {
+            char *errbuf;
+            sshy_log("key authentication failed\n");
+            libssh2_session_last_error(session, &errbuf, NULL, 0); 
+        } else {
+            ret = 0;
+        }
+    }
+    
+    if (ret && libssh2_userauth_password(session, sshSession->username, sshSession->password)) {
+        sshy_log( "password authentication failed\n");
+    } else {
+        ret = 0;
+    }
+   
+    return ret;
+}
+
 int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int port) {
     LIBSSH2_SESSION *session;
     LIBSSH2_CHANNEL *channel = NULL;
     int rc;
-    char *userauthlist;
+    
     
     if (!ssh_initialized) {
         ssh_initialized = 1;
@@ -36,16 +74,10 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
     }
     
     session = libssh2_session_init();
+    sshSession->session = session;
     rc = libssh2_session_startup(session, sockfd);
     
-    userauthlist = libssh2_userauth_list(session, sshSession->username, strlen(sshSession->username));
-    
-    // TODO: obey userauthlist
-    
-    sshy_log( "authenticating %s/%s\n", sshSession->username, sshSession->password);
-    
-    if (libssh2_userauth_password(session, sshSession->username, sshSession->password)) {
-        sshy_log( "authentication error\n");
+    if (ssh_authenticate(sshSession)) {
         return -1;
     }
     
@@ -53,7 +85,7 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
     
     channel = libssh2_channel_direct_tcpip(session, host, port);
     
-    sshSession->session = session;
+    
     sshSession->channel = channel;
     sshSession->blocking = 1;
     sshSession->peekDataRead = 0;
@@ -368,6 +400,7 @@ struct sshSession *createSshSession() {
     
     strncpy(sshSession->username, getenv("SSHY_USER"), sizeof(sshSession->username));
     strncpy(sshSession->password, getenv("SSHY_PASS"), sizeof(sshSession->password));
+    strncpy(sshSession->privateKeyFilename, getenv("SSHY_KEYFILE"), sizeof(sshSession->privateKeyFilename));
     
     sshSession->fd = connectToServer(getenv("SSHY_HOST"), 22);
     

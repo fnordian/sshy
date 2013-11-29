@@ -1,17 +1,47 @@
 #!/bin/bash
 
-if [ $# -lt 4 ]; then
-	echo "usage: $0 username password host command..." >&2
-	exit 1;
-fi
+error() {
+	echo $@ >&2
+	exit 1
+}
 
-export SSHY_USER=$1
-export SSHY_PASS=$2
-export SSHY_HOST=$3
+export SSHY_USER=
+export SSHY_PASS=
+export SSHY_HOST=
+export SSHY_KEYFILE=
 
-shift; shift; shift
+while getopts "l:i:p:" opt; do
+	case $opt in
+		l)
+			SSHY_USER=$OPTARG
+			;;
+		i)
+			SSHY_KEYFILE=$OPTARG
+			;;
+		p)
+			SSHY_PASS=$OPTARG
+			;;
+	esac
+done
+
+shift $(($OPTIND - 1))
+SSHY_HOST=$1
+shift
+
+if [ -z "$SSHY_USER" ] ; then SSHY_USER=$USER; fi
+
+export SSHY_USER
+export SSHY_PASS
+export SSHY_HOST
+export SSHY_KEYFILE
+
+test -z "$SSHY_USER" && error "-l username required"
+test -z "$SSHY_PASS" && test -z "$SSHY_KEYFILE" && error "-p password or -i keyfile required"
+test -z "$SSHY_HOST" && error "hostname required"
+test $# == 0 && error "command to tunnel required"
 
 export LD_PRELOAD=./out/production/sshy/libsshy.so
 
-$@ 2>/tmp/out 
-	
+
+$@
+
