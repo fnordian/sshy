@@ -12,6 +12,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <pwd.h>
+
 #include "connect.h"
 #include "log.h"
 
@@ -23,6 +25,52 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
                         const int targetPort, struct sockaddr *clientAddress, int clientAddressLen);
 
 struct sshSession *createSshSession();
+
+const char *getKnownHostsFile() {
+    static char knownHostsFile[1024];
+    struct passwd *pw;
+    const char *homedir;
+    
+    
+    pw = getpwuid(getuid());
+    homedir = pw->pw_dir;
+    
+    snprintf(knownHostsFile, sizeof(knownHostsFile), "%s/.ssh/known_hosts", homedir);
+    
+    return knownHostsFile;
+}
+
+int ssh_checkKnownHosts(struct sshSession *sshSession) {
+    LIBSSH2_KNOWNHOSTS *nh;
+    const char *fingerprint;
+    size_t len;
+    int type;
+    struct libssh2_knownhost *host;
+    int check;
+    
+    nh = libssh2_knownhost_init(sshSession->session);
+    
+    if (!nh) {
+        return -1;
+    }
+    
+     /* read all hosts from here */ 
+    libssh2_knownhost_readfile(nh, getKnownHostsFile(), LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    
+    fingerprint = libssh2_session_hostkey(sshSession->session, &len, &type);
+    
+    if (!fingerprint) {
+        return -1;
+    }
+    
+    check = libssh2_knownhost_check(nh, sshSession->sshHostname,
+                                            fingerprint, len,
+                                            LIBSSH2_KNOWNHOST_TYPE_PLAIN|
+                                            LIBSSH2_KNOWNHOST_KEYENC_RAW,
+                                            &host);
+    
+    return check == LIBSSH2_KNOWNHOST_CHECK_MATCH ? 0 : -1;
+}
 
 int ssh_agentAuthenticate(LIBSSH2_SESSION *session, const char *username) {
     LIBSSH2_AGENT *agent;
@@ -59,7 +107,7 @@ int ssh_authenticate(struct sshSession *sshSession) {
     
     userauthlist = libssh2_userauth_list(session, sshSession->username, strlen(sshSession->username));
     
-    sshy_log( "authenticating %s/%s\n", sshSession->username, sshSession->password);
+    sshy_log( "authenticating %s\n", sshSession->username);
     
     if (!ssh_agentAuthenticate(session, sshSession->username)) {
         ret = 0;
@@ -106,11 +154,15 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
     sshSession->session = session;
     rc = libssh2_session_startup(session, sockfd);
     
-    if (ssh_authenticate(sshSession)) {
+    if (ssh_checkKnownHosts(sshSession)) {
+        sshy_log("cannot assure host identity\n");
         return -1;
     }
     
-    sshy_log( "opening tcpchannel to %s:%d\n", host, port);
+    if (ssh_authenticate(sshSession)) {
+        sshy_log("cannot authenticate to ssh server\n");
+        return -1;
+    }
     
     channel = libssh2_channel_direct_tcpip(session, host, port);
     
@@ -122,7 +174,6 @@ int ssh_connect(struct sshSession *sshSession, int sockfd, const char *host, int
    
     
     if (channel != NULL) {
-        sshy_log( "i've got the channel!!!!\n");
         return 0;
     } else {
         sshy_log( "couldn't get the channel!!!!\n");
@@ -175,7 +226,7 @@ ssize_t ssh_read(struct sshSession *sshSession, char *buf, size_t buflen) {
         errno = EAGAIN;
     }
         
-    if (ret > 0) {
+/*    if (ret > 0) {
         //sshy_log( "ssh_read got: %s\n", buf);
     } else {
         sshy_log( "ssh_read error: %d\n", ret);
@@ -186,7 +237,7 @@ ssize_t ssh_read(struct sshSession *sshSession, char *buf, size_t buflen) {
             sshy_log( "ssh_read no eof\n");
         }   
     }
-    
+  */  
     //libssh2_channel_set_blocking(sshSession->channel, 1);
     
     return ret;
@@ -226,8 +277,6 @@ int ssh_read_poll(struct sshSession *sshSession, int blocking) {
     
     libssh2_channel_set_blocking(sshSession->channel, blocking);
     
-    sshy_log( "read poll ret: %d ____________-------------_______________-\n", ret);
-    
     if (ret == 1) {
         sshSession->peekDataRead = 1;
     }
@@ -238,7 +287,6 @@ int ssh_read_poll(struct sshSession *sshSession, int blocking) {
 
 void ssh_set_block(struct sshSession *sshSession, int blocking) {
     if (sshSession->channel) {
-        sshy_log( "setting channel to %s\n", blocking ? "blocking" : "non blocking");
         libssh2_channel_set_blocking(sshSession->channel, blocking);
     }
 }
@@ -283,11 +331,8 @@ int tunnelPort(const char *targetHost, const int targetPort) {
     if ((p = fork()) == 0) { // no zombies please
         int clientSocket;
         
-        sshy_log("about to accept. %d\n", getpid());
-        
         if((clientSocket = accept(listenSocket, (struct sockaddr *)&sin, &sinlen)) > 0) {
             real_close(listenSocket);
-            sshy_log( "client socket: %d\n", clientSocket);
             
             handleTunnelClient(clientSocket, targetHost, targetPort, (struct sockaddr *) &sin, sinlen);
             real_close(clientSocket);
@@ -337,8 +382,6 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
     inet46_ntoa(clientAddress, shost, sizeof(shost));
     sport = inet46_ntohs(clientAddress);
     
-    sshy_log( "client socket: %d\n", clientSocket);
-    
     while (! stopped) {
         FD_ZERO(&fds);
         FD_SET(clientSocket, &fds);
@@ -371,7 +414,6 @@ void handleTunnelClient(int clientSocket,const char *targetHost,
             if (-1 == len && errno == EAGAIN) {
                 break;
             } else if (len < 0) {
-                sshy_log( "libssh2_channel_read: %d", (int)len);
                 STOP;
             } else if (len == 0) {
                 STOP;
@@ -430,8 +472,9 @@ struct sshSession *createSshSession() {
     strncpy(sshSession->username, getenv("SSHY_USER"), sizeof(sshSession->username));
     strncpy(sshSession->password, getenv("SSHY_PASS"), sizeof(sshSession->password));
     strncpy(sshSession->privateKeyFilename, getenv("SSHY_KEYFILE"), sizeof(sshSession->privateKeyFilename));
+    strncpy(sshSession->sshHostname, getenv("SSHY_HOST"), sizeof(sshSession->sshHostname));
     
-    sshSession->fd = connectToServer(getenv("SSHY_HOST"), 22);
+    sshSession->fd = connectToServer(sshSession->sshHostname, 22);
     
     if (sshSession->fd < 0) {
         return NULL;

@@ -6,6 +6,7 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <unistd.h>
+#include <syslog.h>
 
 #include "log.h"
 #include "mutex.h"
@@ -37,6 +38,8 @@ static void log_init() {
         logfile = fopen(logfilename, "a");
     }
     
+    openlog("sshy", 0, LOG_USER);
+    
     semid = createMutex();
 }    
 
@@ -51,6 +54,8 @@ int sshy_log(const char *format, ...) {
         fprintf(logfile,"[%d] - ", getpid());
         ret = vfprintf(logfile, format, ap);
     }
+    
+    vsyslog(LOG_NOTICE, format, ap);
     
     va_end(ap); /* Cleanup the va_list */
     

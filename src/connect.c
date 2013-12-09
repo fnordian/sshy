@@ -70,8 +70,6 @@ int wrapFd(int fd) {
     
     idx = findFreeFdSlot();
     
-    sshy_log( "wrapping %d, idx: %d\n", fd, idx);
-
     if (idx >= 0) {
         wrappedFds[idx].fd = fd;
         release_mutex(mutex);
@@ -98,8 +96,6 @@ int findFdWrapSlot(int fd) {
 
     release_mutex(mutex);
     
-    sshy_log( "findFdWrapSlot didnt find slot\n");
-    
     return -1;
 }
 
@@ -124,7 +120,6 @@ int socket(int domain, int type, int protocol) {
     
 	if (type & SOCK_STREAM) {
         idx = wrapFd(fd);
-        sshy_log( "socket idx: %d\n", idx);
 	} 
         
 	return fd;
@@ -139,12 +134,9 @@ void destroySshSession(struct sshSession *sshSession) {
 int close(int fd) {
     int idx;
     
-    sshy_log("close %d\n", fd);
-    
     idx = findFdWrapSlot(fd);
 
     if (idx >= 0) {
-        sshy_log( "closing tunneld socket %d\n", fd);
         wrappedFds[idx].fd = UNUSED_FD;
     }
     return real_close(fd);
@@ -168,11 +160,6 @@ int connect(int sockfd, const struct sockaddr *_addr, socklen_t addrlen) {
     
     memcpy(addr, _addr, addrlen);
 	
-	sshy_log( "connect begin %d\n", sockfd);
-    
-	
-	
-	
 	if (findFdWrapSlot(sockfd) >= 0 && (addr->sa_family == AF_INET || addr->sa_family == AF_INET6)) {
         int localTunnelEntryPort;
         
@@ -181,9 +168,6 @@ int connect(int sockfd, const struct sockaddr *_addr, socklen_t addrlen) {
         setTunnelPortAndHost(addr, localTunnelEntryPort);
         
         ret = real_connect(sockfd, addr, addrlen);
-        
-        sshy_log("connect to tunnelport %d returned %d\n", localTunnelEntryPort, ret);
-        
 	} else {
 		ret = real_connect(sockfd, addr, addrlen);
 	}

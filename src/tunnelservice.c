@@ -89,8 +89,6 @@ static void startTunnelService() {
 static void readForSure(int fd, void *buf, size_t count) {
     int rc;
     
-    sshy_log("%d reading %d bytes\n", fd, count);
-    
     do {
         rc = read(fd, buf, count);
         
@@ -107,8 +105,6 @@ static void readForSure(int fd, void *buf, size_t count) {
 
 static void writeForSure(int fd, const void *buf, size_t count) {
     int rc;
-    
-    sshy_log("%d writing %d bytes\n", fd, count);
     
     do {
         rc = write(fd, buf, count);
