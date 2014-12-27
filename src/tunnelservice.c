@@ -110,7 +110,7 @@ static void writeForSure(int fd, const void *buf, size_t count) {
         rc = write(fd, buf, count);
         
         if (rc < 1) {
-            sshy_log("tunnelservice cannot write from socket any more\n");
+            sshy_log("tunnelservice cannot write to socket any more\n");
             _exit(0);
         }
         
